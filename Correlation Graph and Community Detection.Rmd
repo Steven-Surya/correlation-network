@@ -1,0 +1,136 @@
+---
+title: "Correlation Graph, Community Detection, and Graph Manipulation"
+author: "Steven Surya Tanujaya"
+date: "July 4, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+The objective here is to cluster the city in Swiss based on the given attributes using correlation network. First, we need to filter city/row with very high correlation to (at least one) other city.
+
+This documentation can also be accessed in my Kaggle kernel, [here](https://www.kaggle.com/stevensurya/clustering-using-correlation-network)
+
+The `corrr` package works well with `tidygraph` and `ggraph`. We will use this pacakage to 
+```{r}
+library(tidygraph)
+library(ggraph)
+library(corrr)
+library(tidyverse)
+
+##NOTE: COBA DI SCALE SEBELUM COR
+
+swiss.cor <- swiss %>%    # t() for matrix transpose
+  t() %>% correlate() %>%    # correlate() is equivalent to cor() but                                                put NA as its diagonal entry and different class
+  shave(upper = TRUE) %>%            # Shave the data frame to lower triangular matrix
+  stretch(na.rm = TRUE) %>%           
+  filter(r >= 0.99)                 
+swiss.cor
+```
+
+Here we have constructed "the edges" dataframe for mtcars dataset.
+
+```{r}
+#Create tbl_graph object
+library(tidygraph)
+library(ggraph)
+set.seed(100)
+swiss.graph <- as_tbl_graph(swiss.cor, directed = FALSE)
+
+# There are 11 city missing, which means they have weak correlation to other city 
+swiss.graph %>% activate(nodes) %>% as.data.frame() %>% nrow()
+nrow(swiss)
+
+#visualize the network
+ggraph(swiss.graph) + 
+  geom_edge_link() + 
+  geom_node_point() +
+  geom_node_text(
+    aes(label = name), size = 3, repel = TRUE
+    ) +
+  theme_graph()
+```
+
+First, let compare the k-means result to the network components.
+```{r}
+set.seed(1)
+swiss.clust<-kmeans(swiss,4)
+```
+
+
+We want to color the network by `cluster`, here we can apply `join` to graph object. 
+```{r}
+swiss.group <- data_frame(
+  name = rownames(swiss),
+  group = as.factor(swiss.clust$cluster)
+)
+
+swiss.graph <- swiss.graph %>%
+  activate(nodes) %>%
+  left_join(swiss.group, by = "name") %>%
+  rename(label = name) %>% 
+  activate(edges) %>% 
+  rename(weight=r)
+```
+
+```{r}
+set.seed(100)
+ggraph(swiss.graph) + 
+  geom_edge_link(aes(width = weight), alpha = 0.2) + 
+  scale_edge_width(range = c(0.2, 1.8)) +
+  geom_node_point(aes(color = group), size = 3) +
+  geom_node_text(aes(label = label), size = 3, repel = TRUE) +
+  theme_graph()
+```
+
+How about the negative correlation?
+```{r}
+swiss.cor2 <- swiss %>%    
+  t() %>% correlate() %>%    
+  shave(upper = TRUE) %>%           
+  stretch(na.rm = TRUE) %>%           
+  filter(r < 0)                 
+swiss.cor
+
+set.seed(100)
+swiss.graph2 <- as_tbl_graph(swiss.cor2, directed = FALSE)
+
+swiss.graph2 <- swiss.graph2 %>%
+  activate(nodes) %>%
+  left_join(swiss.group, by = "name") %>%
+  rename(label = name) %>% 
+  activate(edges) %>% 
+  rename(weight=r)
+
+set.seed(100)
+ggraph(swiss.graph2) + 
+  geom_edge_link(aes(width = -weight), alpha = 0.2) + 
+  scale_edge_width(range = c(0.2, 1.8)) +
+  geom_node_point(aes(color = group), size = 3) +
+  geom_node_text(aes(label = label), size = 3, repel = TRUE) +
+  theme_graph()
+```
+
+community detection can be applied using `group_*` some of them using edges and some using node as their calculation
+```{r}
+set.seed(100)
+swiss.graph %>%
+  activate(nodes) %>%
+   mutate(community = as.factor(group_infomap())) %>% 
+  ggraph(layout = "graphopt") + 
+  geom_edge_link(width = 1, colour = "lightgray") +
+  geom_node_point(aes(colour = community), size = 4) +
+  geom_node_text(aes(label = label), repel = TRUE)+
+  theme_graph()
+```
+
+This result show us better cluster for our data. Compared to k-means, this method is more reliable since it is not just only consider the value of each node but also its pattern (in this case: correlation).
+
+
+
+Reference:   
+
+- http://www.sthda.com/english/articles/33-social-network-analysis/136-network-analysis-and-manipulation-using-r/
